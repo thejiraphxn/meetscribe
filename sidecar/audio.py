@@ -172,3 +172,16 @@ def float32_to_pcm16(frame: np.ndarray) -> bytes:
     """Convert Float32 [-1,1] → little-endian int16 PCM bytes (for Deepgram)."""
     clipped = np.clip(frame, -1.0, 1.0)
     return (clipped * 32767.0).astype("<i2").tobytes()
+
+
+def write_wav_file(path: str, frames: list[np.ndarray], sample_rate: int = SAMPLE_RATE) -> None:
+    """Write accumulated Float32 frames to a 16-bit mono WAV (for local playback)."""
+    import wave
+
+    audio = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
+    pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
+    with wave.open(path, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm16.tobytes())

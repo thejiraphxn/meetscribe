@@ -37,3 +37,30 @@ native/*.o
 
 # Prisma
 apps/backend/prisma/migrations/dev.db
+
+# --- transcript-service (Faster-Whisper / CTranslate2) ---
+# Extra env patterns (keep .env.example tracked — it documents setup)
+.env.*
+!.env.example
+!**/.env.example
+
+# Temp / uploaded audio
+tmp/
+temp/
+uploads/
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+
+# Large local model files — keep the folder + its docs, drop the weights.
+models/**/model.bin
+models/**/*.bin
+models/**/*.onnx
+models/**/*.pt
+models/**/*.safetensors
+# Copied local CTranslate2 model — ignore the whole directory (large, local-only).
+models/biodatlab-th-small-ct2/
+!models/.gitkeep
+!models/README.md

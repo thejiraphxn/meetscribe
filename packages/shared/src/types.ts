@@ -158,6 +158,8 @@ export type WsCommand =
       lang: string;
       /** Project the session belongs to (persisted locally for idempotent sync). */
       project_id?: string;
+      /** Run live + on-stop LLM summarisation. Default true. */
+      auto_summarise?: boolean;
     }
   | { cmd: 'stop' }
   | { cmd: 'set_title'; title: string }
@@ -168,6 +170,18 @@ export type WsCommand =
       model: string;
       /** Bearer token for cloud / authenticated endpoints (optional for local). */
       api_key?: string;
+    }
+  | {
+      cmd: 'set_transcription_config';
+      /** Realtime (Deepgram). */
+      deepgram_api_key?: string;
+      deepgram_model?: string;
+      /** Batch provider: Groq Whisper (cloud) or the local transcript-service. */
+      batch_provider?: 'groq' | 'local';
+      groq_api_key?: string;
+      groq_model?: string;
+      /** Base URL of the local transcript-service, e.g. http://localhost:9099 */
+      transcript_service_url?: string;
     }
   | { cmd: 'summarise' }
   | { cmd: 'sync'; backend_url: string; access_token: string }

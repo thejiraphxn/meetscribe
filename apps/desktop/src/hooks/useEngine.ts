@@ -40,10 +40,24 @@ export interface EngineApi {
   progress: ProcessingProgress | null;
   syncStatus: EngineSyncStatus | null;
   lastError: string | null;
-  start: (mode: TranscriptionMode, sessionId: string, lang?: string, projectId?: string) => void;
+  start: (
+    mode: TranscriptionMode,
+    sessionId: string,
+    lang?: string,
+    projectId?: string,
+    autoSummarise?: boolean,
+  ) => void;
   stop: () => void;
   setTitle: (title: string) => void;
   setLlmConfig: (baseUrl: string, model: string, apiKey: string) => void;
+  setTranscriptionConfig: (cfg: {
+    deepgramApiKey: string;
+    deepgramModel: string;
+    batchProvider: 'groq' | 'local';
+    groqApiKey: string;
+    groqModel: string;
+    transcriptServiceUrl: string;
+  }) => void;
   summarise: () => void;
   sync: (backendUrl: string, accessToken: string) => void;
   clear: () => void;
@@ -159,7 +173,7 @@ export function useEngine(): EngineApi {
   }, []);
 
   const start = useCallback(
-    (m: TranscriptionMode, sessionId: string, lang = 'th', projectId = '') => {
+    (m: TranscriptionMode, sessionId: string, lang = 'th', projectId = '', autoSummarise = true) => {
       setSegments([]);
       setInterim('');
       setNotes(null);
@@ -167,7 +181,14 @@ export function useEngine(): EngineApi {
       setProgress(null);
       setSyncStatus(null);
       setLastError(null);
-      send({ cmd: 'start', mode: m, session_id: sessionId, lang, project_id: projectId });
+      send({
+        cmd: 'start',
+        mode: m,
+        session_id: sessionId,
+        lang,
+        project_id: projectId,
+        auto_summarise: autoSummarise,
+      });
     },
     [send],
   );
@@ -177,6 +198,19 @@ export function useEngine(): EngineApi {
   const setLlmConfig = useCallback(
     (baseUrl: string, model: string, apiKey: string) =>
       send({ cmd: 'set_llm_config', base_url: baseUrl, model, api_key: apiKey }),
+    [send],
+  );
+  const setTranscriptionConfig = useCallback<EngineApi['setTranscriptionConfig']>(
+    (cfg) =>
+      send({
+        cmd: 'set_transcription_config',
+        deepgram_api_key: cfg.deepgramApiKey,
+        deepgram_model: cfg.deepgramModel,
+        batch_provider: cfg.batchProvider,
+        groq_api_key: cfg.groqApiKey,
+        groq_model: cfg.groqModel,
+        transcript_service_url: cfg.transcriptServiceUrl,
+      }),
     [send],
   );
   const summarise = useCallback(() => send({ cmd: 'summarise' }), [send]);
@@ -208,6 +242,7 @@ export function useEngine(): EngineApi {
     stop,
     setTitle,
     setLlmConfig,
+    setTranscriptionConfig,
     summarise,
     sync,
     clear,

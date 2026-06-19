@@ -67,7 +67,8 @@ export function Bar(): React.ReactElement {
       engine.stop();
     } else {
       const projectId = localStorage.getItem('meetscribe.selectedProjectId') ?? '';
-      engine.start(mode, newSessionId(), 'th', projectId);
+      const autoSummarise = localStorage.getItem('meetscribe.autoSummarise') !== 'false';
+      engine.start(mode, newSessionId(), 'th', projectId, autoSummarise);
     }
   }, [recording, engine, mode]);
 

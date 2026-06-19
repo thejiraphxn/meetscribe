@@ -1,38 +1,54 @@
-# Render Infrastructure-as-Code for the MeetScribe backend + database.
+# Render Blueprint — MeetScribe backend API + managed PostgreSQL.
 #
-# Build runs from the monorepo root so the `@meetscribe/shared` workspace
-# dependency is installed + built before the backend compiles.
+# Deploy: Render Dashboard → New → Blueprint → connect this repo → Apply.
+# Render reads this file, provisions the database, builds and starts the API.
+#
+# Only the backend is deployed here. The desktop app, Python sidecar, native
+# helper, and the (local-only) transcript-service run on the user's machine and
+# are intentionally NOT part of this blueprint.
+#
+# Build order matters: `prisma generate` must run BEFORE `build:backend` because
+# the backend's TypeScript imports the generated Prisma client types.
 services:
   - type: web
     name: meetscribe-api
     runtime: node
     plan: free
+    region: singapore
+    branch: main
+    healthCheckPath: /health
     buildCommand: >
       npm ci &&
       npm run build:shared &&
-      npm run build:backend &&
-      npm --workspace @meetscribe/backend exec prisma generate
+      npm --workspace @meetscribe/backend exec prisma generate &&
+      npm run build:backend
     startCommand: >
       npm --workspace @meetscribe/backend exec prisma migrate deploy &&
       node apps/backend/dist/index.js
-    healthCheckPath: /health
     envVars:
+      # Injected automatically from the managed database below.
       - key: DATABASE_URL
         fromDatabase:
           name: meetscribe-db
           property: connectionString
       - key: NODE_ENV
         value: production
+      # Generated once by Render and kept stable across deploys.
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
         generateValue: true
+      # ── Set these in the Render dashboard after the first deploy ──────────
+      # Google OAuth client (Google Cloud Console → Credentials → OAuth Web).
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      # Public URL of THIS service (e.g. https://meetscribe-api.onrender.com).
+      # Used to build the OAuth redirect URI; must match the Google console.
       - key: BACKEND_URL
         sync: false
+      # Desktop deep-link scheme the backend redirects to after OAuth.
       - key: FRONTEND_URL
         value: meetscribe://
 

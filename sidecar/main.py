@@ -31,8 +31,14 @@ except ImportError:
 
 from websockets.asyncio.server import ServerConnection, serve
 
-from audio import AudioMixer, MicCapture, SystemAudioCapture, float32_to_pcm16
-from config import get_settings, require_deepgram_key, require_groq_key, env_summary
+from audio import (
+    AudioMixer,
+    MicCapture,
+    SystemAudioCapture,
+    float32_to_pcm16,
+    write_wav_file,
+)
+from config import get_settings, env_summary
 from db import LocalDB, SessionRecord
 from protocol import Hub, msg_error, msg_processing, msg_state
 from summarise import Summariser
@@ -48,6 +54,11 @@ log = logging.getLogger("meetscribe.main")
 
 # How often (seconds) to regenerate the live summary during a realtime recording.
 LIVE_SUMMARY_INTERVAL = 25.0
+
+# Model defaults used only when the UI leaves the model field blank. API keys
+# have NO default — the user must provide them in Settings (no .env fallback).
+DEFAULT_DEEPGRAM_MODEL = "nova-2"
+DEFAULT_WHISPER_MODEL = "whisper-large-v3"
 
 
 def _now_iso() -> str:
@@ -74,11 +85,25 @@ class Engine:
         self._capture_task: asyncio.Task[None] | None = None
         self._live_summary_task: asyncio.Task[None] | None = None
         self._last_summary_count: int = 0
+        self._auto_summarise: bool = True
+
+        # Local audio recording (for playback). Stored ONLY on this machine,
+        # never synced to the backend.
+        self._recordings_dir = self._settings.db_path.parent / "recordings"
+        self._record_buffer: list[Any] = []
 
         # LLM (Ollama) config overrides from the UI; fall back to settings.
         self._llm_base_url: str | None = None
         self._llm_model: str | None = None
         self._llm_api_key: str | None = None
+
+        # Transcription config overrides from the UI; fall back to settings.
+        self._deepgram_api_key: str | None = None
+        self._deepgram_model: str | None = None
+        self._batch_provider: str = "groq"  # 'groq' | 'local'
+        self._groq_api_key: str | None = None
+        self._groq_model: str | None = None
+        self._transcript_service_url: str | None = None
         self._mic: MicCapture | None = None
         self._system: SystemAudioCapture | None = None
         self._realtime: RealtimeTranscriber | None = None
@@ -96,7 +121,12 @@ class Engine:
     # --- commands ----------------------------------------------------------
 
     async def start(
-        self, mode: str, session_id: str, lang: str, project_id: str = ""
+        self,
+        mode: str,
+        session_id: str,
+        lang: str,
+        project_id: str = "",
+        auto_summarise: bool = True,
     ) -> None:
         if self._state != "idle":
             await self._hub.broadcast(msg_error(f"cannot start while {self._state}"))
@@ -107,10 +137,12 @@ class Engine:
 
         self._session_id = session_id
         self._lang = lang
+        self._auto_summarise = auto_summarise
         self._started_at_iso = _now_iso()
         self._started_at_mono = time.monotonic()
         self._segment_texts = []
         self._last_summary_count = 0
+        self._record_buffer = []
 
         # Persist a pending session row up front so segments have a parent.
         await asyncio.to_thread(
@@ -145,23 +177,44 @@ class Engine:
 
         assert self._session_id is not None
         if mode == "realtime":
-            key = require_deepgram_key(self._settings)
+            if not self._deepgram_api_key:
+                raise RuntimeError(
+                    "Deepgram API key is required — add it in Settings (⚙)"
+                )
             self._realtime = RealtimeTranscriber(
-                api_key=key,
-                model=self._settings.deepgram_model,
+                api_key=self._deepgram_api_key,
+                model=self._deepgram_model or DEFAULT_DEEPGRAM_MODEL,
                 hub=self._hub,
                 db=self._db,
                 session_id=self._session_id,
                 lang=self._lang,
             )
             await self._realtime.start()
-            # Periodically summarise the in-progress transcript (live notes).
-            self._live_summary_task = asyncio.create_task(self._live_summary_loop())
-        else:
-            key = require_groq_key(self._settings)
+            # Periodically summarise the in-progress transcript (live notes),
+            # only when the user opted into automatic summarisation.
+            if self._auto_summarise:
+                self._live_summary_task = asyncio.create_task(self._live_summary_loop())
+        elif self._batch_provider == "local":
             self._batch = BatchTranscriber(
-                api_key=key,
-                model=self._settings.groq_whisper_model,
+                provider="local",
+                model=self._groq_model or DEFAULT_WHISPER_MODEL,
+                transcript_service_url=self._transcript_service_url
+                or "http://localhost:9099",
+                hub=self._hub,
+                db=self._db,
+                session_id=self._session_id,
+                lang=self._lang,
+            )
+        else:
+            if not self._groq_api_key:
+                raise RuntimeError(
+                    "Groq API key is required for batch mode — add it in Settings (⚙), "
+                    "or switch batch transcription to the local model"
+                )
+            self._batch = BatchTranscriber(
+                provider="groq",
+                api_key=self._groq_api_key,
+                model=self._groq_model or DEFAULT_WHISPER_MODEL,
                 hub=self._hub,
                 db=self._db,
                 session_id=self._session_id,
@@ -174,6 +227,8 @@ class Engine:
     async def _pump(self, mixer: AudioMixer, mode: str) -> None:
         try:
             async for frame in mixer.frames():
+                # Keep a copy for local playback (both modes).
+                self._record_buffer.append(frame)
                 if mode == "realtime" and self._realtime is not None:
                     await self._realtime.send_pcm(float32_to_pcm16(frame))
                 elif mode == "batch" and self._batch is not None:
@@ -222,6 +277,9 @@ class Engine:
         # Stop audio capture first.
         await self._teardown_capture(stop_transcribers=False)
 
+        # Persist the local recording (for playback). Local-only, never synced.
+        await self._save_recording()
+
         try:
             if self._mode == "realtime" and self._realtime is not None:
                 await self._realtime.finish()
@@ -238,14 +296,29 @@ class Engine:
             self._db.finalize_session, self._session_id, ended_iso, duration
         )
 
-        # Auto-summarise once the transcript is complete.
-        await self.summarise()
+        # Auto-summarise once the transcript is complete — only if opted in.
+        # When off, the user can trigger summarisation manually (cmd:summarise).
+        if self._auto_summarise:
+            await self.summarise()
 
         await self._hub.broadcast(msg_processing("saving", 100))
         self._realtime = None
         self._batch = None
         await self._set_state("idle", None)
         log.info("session %s processed (%ds)", self._session_id, duration)
+
+    async def _save_recording(self) -> None:
+        """Write the buffered audio to ~/.meetscribe/recordings/<localId>.wav."""
+        if self._session_id is None or not self._record_buffer:
+            return
+        try:
+            self._recordings_dir.mkdir(parents=True, exist_ok=True)
+            path = str(self._recordings_dir / f"{self._session_id}.wav")
+            frames = list(self._record_buffer)
+            await asyncio.to_thread(write_wav_file, path, frames)
+            log.info("recording saved: %s (%d frames)", path, len(frames))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("failed to save recording (continuing): %s", exc)
 
     async def set_title(self, title: str) -> None:
         if self._session_id is None:
@@ -263,6 +336,34 @@ class Engine:
             self._llm_base_url or "(default)",
             self._llm_model or "(default)",
             "set" if self._llm_api_key else "none",
+        )
+
+    async def set_transcription_config(
+        self,
+        *,
+        deepgram_api_key: str | None,
+        deepgram_model: str | None,
+        batch_provider: str | None,
+        groq_api_key: str | None,
+        groq_model: str | None,
+        transcript_service_url: str | None,
+    ) -> None:
+        self._deepgram_api_key = (deepgram_api_key or "").strip() or None
+        self._deepgram_model = (deepgram_model or "").strip() or None
+        provider = (batch_provider or "").strip().lower()
+        self._batch_provider = provider if provider in ("groq", "local") else "groq"
+        self._groq_api_key = (groq_api_key or "").strip() or None
+        self._groq_model = (groq_model or "").strip() or None
+        self._transcript_service_url = (transcript_service_url or "").strip() or None
+        log.info(
+            "transcription config set: deepgram_model=%s deepgram_key=%s "
+            "batch_provider=%s groq_model=%s groq_key=%s local_url=%s",
+            self._deepgram_model or "(default)",
+            "set" if self._deepgram_api_key else "default",
+            self._batch_provider,
+            self._groq_model or "(default)",
+            "set" if self._groq_api_key else "default",
+            self._transcript_service_url or "(default)",
         )
 
     def _make_summariser(self) -> Summariser:
@@ -344,6 +445,7 @@ async def handle_command(engine: Engine, hub: Hub, raw: str) -> None:
                 session_id=cmd.get("session_id") or str(uuid.uuid4()),
                 lang=cmd.get("lang", "th"),
                 project_id=cmd.get("project_id") or "",
+                auto_summarise=cmd.get("auto_summarise", True),
             )
         elif action == "stop":
             await engine.stop()
@@ -354,6 +456,15 @@ async def handle_command(engine: Engine, hub: Hub, raw: str) -> None:
                 base_url=cmd.get("base_url", ""),
                 model=cmd.get("model", ""),
                 api_key=cmd.get("api_key"),
+            )
+        elif action == "set_transcription_config":
+            await engine.set_transcription_config(
+                deepgram_api_key=cmd.get("deepgram_api_key"),
+                deepgram_model=cmd.get("deepgram_model"),
+                batch_provider=cmd.get("batch_provider"),
+                groq_api_key=cmd.get("groq_api_key"),
+                groq_model=cmd.get("groq_model"),
+                transcript_service_url=cmd.get("transcript_service_url"),
             )
         elif action == "summarise":
             await engine.summarise()

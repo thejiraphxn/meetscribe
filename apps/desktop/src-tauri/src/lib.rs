@@ -61,6 +61,22 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+/// Absolute path to a session's local recording, if it exists on this machine.
+/// Recordings live only locally at ~/.meetscribe/recordings/<localId>.wav.
+#[tauri::command]
+fn recording_path(local_id: String) -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let path = std::path::PathBuf::from(home)
+        .join(".meetscribe")
+        .join("recordings")
+        .join(format!("{local_id}.wav"));
+    if path.exists() {
+        Some(path.to_string_lossy().into_owned())
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 fn hide_bar(app: AppHandle) -> Result<(), String> {
     // Hide (not close) so the menu-bar tray can bring it back.
@@ -286,6 +302,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             toggle_panel,
             toggle_caption,
+            recording_path,
             quit,
             hide_bar,
             open_auth_browser,

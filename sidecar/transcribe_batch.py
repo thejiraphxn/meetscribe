@@ -28,15 +28,20 @@ class BatchTranscriber:
     def __init__(
         self,
         *,
-        api_key: str,
-        model: str,
         hub: Hub,
         db: LocalDB,
         session_id: str,
         lang: str,
+        provider: str = "groq",
+        api_key: str | None = None,
+        model: str = "whisper-large-v3",
+        transcript_service_url: str | None = None,
     ) -> None:
-        self._client = Groq(api_key=api_key)
+        self._provider = provider
         self._model = model
+        self._transcript_service_url = transcript_service_url
+        # Groq client created lazily only when actually using the cloud provider.
+        self._client = Groq(api_key=api_key) if (provider == "groq" and api_key) else None
         self._hub = hub
         self._db = db
         self._session_id = session_id
@@ -66,7 +71,11 @@ class BatchTranscriber:
         await self._hub.broadcast(msg_processing("transcribing", 10))
         wav_path = await asyncio.to_thread(self._write_wav)
         try:
-            result = await asyncio.to_thread(self._call_groq, wav_path)
+            if self._provider == "local":
+                segments = await self._call_local(wav_path)
+            else:
+                result = await asyncio.to_thread(self._call_groq, wav_path)
+                segments = self._extract_segments(result)
         finally:
             try:
                 os.remove(wav_path)
@@ -74,7 +83,6 @@ class BatchTranscriber:
                 pass
 
         await self._hub.broadcast(msg_processing("transcribing", 80))
-        segments = self._extract_segments(result)
         texts: list[str] = []
 
         for sequence, seg in enumerate(segments):
@@ -102,6 +110,21 @@ class BatchTranscriber:
 
         await self._hub.broadcast(msg_processing("transcribing", 100))
         return texts
+
+    async def _call_local(self, wav_path: str) -> list[dict[str, object]]:
+        """Transcribe via the self-hosted transcript-service (Faster-Whisper)."""
+        from transcript_client import transcribe_file
+
+        result = await transcribe_file(
+            wav_path,
+            language=self._lang,
+            output="segments",
+            base_url=self._transcript_service_url,
+        )
+        return [
+            {"start": s.get("start", 0.0), "end": s.get("end"), "text": s.get("text", "")}
+            for s in (result.get("segments") or [])
+        ]
 
     def _call_groq(self, wav_path: str) -> object:
         with open(wav_path, "rb") as fh:

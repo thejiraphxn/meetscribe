@@ -1,9 +1,9 @@
 """Environment validation for the MeetScribe sidecar.
 
-API keys are *not* hard-required at startup: the sidecar can boot and serve the
-WebSocket without them, but a `start` command will fail loudly if the key for
-the requested mode is missing. We still validate types/shape via pydantic so a
-malformed env fails fast and clearly.
+Transcription API keys + models are NOT read from the environment — the user
+provides them in the app's Settings (sent via `set_transcription_config`). This
+file only handles infra (WebSocket bind, local paths) and the Ollama
+summarisation defaults.
 """
 
 from __future__ import annotations
@@ -29,13 +29,8 @@ class Settings(BaseSettings):
     ws_host: str = Field(default="127.0.0.1", alias="MEETSCRIBE_WS_HOST")
     ws_port: int = Field(default=8765, alias="MEETSCRIBE_WS_PORT")
 
-    # Transcription / summarisation providers. Optional at boot; required per-mode.
-    deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
-    groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
-
-    # Transcription models (cloud).
-    deepgram_model: str = Field(default="nova-2", alias="DEEPGRAM_MODEL")
-    groq_whisper_model: str = Field(default="whisper-large-v3", alias="GROQ_WHISPER_MODEL")
+    # Transcription keys + models are supplied by the app at runtime (no env
+    # fallback). See set_transcription_config in main.py.
 
     # Summarisation LLM via Ollama (local).
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
@@ -72,25 +67,12 @@ def get_settings() -> Settings:
     return Settings()  # type: ignore[call-arg]
 
 
-def require_deepgram_key(settings: Settings) -> str:
-    if not settings.deepgram_api_key:
-        raise RuntimeError("DEEPGRAM_API_KEY is required for realtime mode")
-    return settings.deepgram_api_key
-
-
-def require_groq_key(settings: Settings) -> str:
-    if not settings.groq_api_key:
-        raise RuntimeError("GROQ_API_KEY is required for batch transcription / summarisation")
-    return settings.groq_api_key
-
-
 def env_summary() -> str:
     """Human-readable summary for boot logs (never prints secret values)."""
     s = get_settings()
     return (
         f"ws={s.ws_host}:{s.ws_port} "
-        f"deepgram={'set' if s.deepgram_api_key else 'MISSING'} "
-        f"groq={'set' if s.groq_api_key else 'MISSING'} "
+        f"transcription=user-provided "
         f"ollama={s.ollama_base_url}({s.ollama_model}) "
         f"db={s.db_path}"
     )

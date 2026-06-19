@@ -8,8 +8,13 @@ import type { LiveSegment } from '../../hooks/useEngine';
 import { AuthForm } from '../AuthForm';
 import { Settings } from './Settings';
 import { hasSavedLlmConfig, loadLlmConfig } from '../../lib/llmConfig';
+import {
+  hasSavedTranscriptionConfig,
+  loadTranscriptionConfig,
+} from '../../lib/transcriptionConfig';
 import { ProjectSelector } from './ProjectSelector';
 import { SessionHistory } from './SessionHistory';
+import { RecordingPlayer } from './RecordingPlayer';
 import { TranscriptFeed } from './TranscriptFeed';
 import { NotesPanel } from './NotesPanel';
 import { ActionItems } from './ActionItems';
@@ -43,17 +48,33 @@ export function Panel(): React.ReactElement {
   // A past session opened from history (read-only). null = live view.
   const [viewing, setViewing] = useState<SessionDetailDTO | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // Whether to auto-summarise on stop (shared with the bar via localStorage).
+  const [autoSummarise, setAutoSummarise] = useState(
+    () => localStorage.getItem('meetscribe.autoSummarise') !== 'false',
+  );
 
   const recording = engine.state === 'recording';
 
-  // Push any saved LLM config to the sidecar once connected (config lives only
-  // on this machine; it is never sent to the backend).
+  const toggleAutoSummarise = useCallback(() => {
+    setAutoSummarise((v) => {
+      const next = !v;
+      localStorage.setItem('meetscribe.autoSummarise', String(next));
+      return next;
+    });
+  }, []);
+
+  // Push any saved config to the sidecar once connected (config lives only on
+  // this machine; it is never sent to the backend).
   useEffect(() => {
-    if (engine.connected && hasSavedLlmConfig()) {
+    if (!engine.connected) return;
+    if (hasSavedLlmConfig()) {
       const c = loadLlmConfig();
       engine.setLlmConfig(c.baseUrl, c.model, c.apiKey);
     }
-  }, [engine.connected, engine.setLlmConfig]);
+    if (hasSavedTranscriptionConfig()) {
+      engine.setTranscriptionConfig(loadTranscriptionConfig());
+    }
+  }, [engine.connected, engine.setLlmConfig, engine.setTranscriptionConfig]);
 
   const openSession = useCallback(async (sessionId: string) => {
     try {
@@ -131,7 +152,8 @@ export function Panel(): React.ReactElement {
       {showSettings && (
         <Settings
           onClose={() => setShowSettings(false)}
-          onApply={(c) => engine.setLlmConfig(c.baseUrl, c.model, c.apiKey)}
+          onApplyLlm={(c) => engine.setLlmConfig(c.baseUrl, c.model, c.apiKey)}
+          onApplyTranscription={(c) => engine.setTranscriptionConfig(c)}
         />
       )}
       {/* Left sidebar */}
@@ -216,6 +238,9 @@ export function Panel(): React.ReactElement {
           )}
         </header>
 
+        {/* Playback for a viewed past session (local recordings only). */}
+        {viewing && <RecordingPlayer localId={viewing.localId} />}
+
         {/* Stacked sections: Transcript (top) over Notes (bottom), each scrolls. */}
         <div className="flex-1 flex flex-col min-h-0">
           {/* Transcript section */}
@@ -243,10 +268,43 @@ export function Panel(): React.ReactElement {
 
           {/* Notes + action items section */}
           <section className="flex-1 min-h-0 flex flex-col">
-            <div className="shrink-0 px-4 py-1.5 border-b border-border/60 bg-surface-elevated/40">
-              <span className="text-xs uppercase tracking-wide text-text-muted">
+            <div className="shrink-0 px-4 py-1.5 flex items-center justify-between gap-2 border-b border-border/60 bg-surface-elevated/40">
+              <span className="text-xs uppercase tracking-wide text-text-muted shrink-0">
                 Notes &amp; Action Items
               </span>
+              {!viewing && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={toggleAutoSummarise}
+                    title="Summarise automatically when you stop recording"
+                    className="flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-primary"
+                  >
+                    <span
+                      className={`h-3.5 w-6 rounded-full relative transition ${
+                        autoSummarise ? 'bg-accent-amber' : 'bg-surface-overlay'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all ${
+                          autoSummarise ? 'left-3' : 'left-0.5'
+                        }`}
+                      />
+                    </span>
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => engine.summarise()}
+                    disabled={engine.state !== 'idle' || engine.segments.length === 0}
+                    title="Summarise the current transcript now"
+                    className="text-[11px] px-2 py-0.5 rounded-md border border-border
+                               hover:bg-surface-overlay disabled:opacity-40"
+                  >
+                    Summarise
+                  </button>
+                </div>
+              )}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto">
               <NotesPanel notes={viewing ? viewing.notes : engine.notes} />
