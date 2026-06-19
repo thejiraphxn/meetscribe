@@ -1,7 +1,9 @@
-# Render Blueprint — MeetScribe backend API + managed PostgreSQL.
+# Render Blueprint — MeetScribe backend API.
 #
 # Deploy: Render Dashboard → New → Blueprint → connect this repo → Apply.
-# Render reads this file, provisions the database, builds and starts the API.
+#
+# Uses an EXISTING PostgreSQL (no managed database is provisioned here) — set
+# DATABASE_URL in the Render dashboard at deploy time.
 #
 # Only the backend is deployed here. The desktop app, Python sidecar, native
 # helper, and the (local-only) transcript-service run on the user's machine and
@@ -17,8 +19,11 @@ services:
     region: singapore
     branch: main
     healthCheckPath: /health
+    # NODE_ENV=production is set below and is visible during build, which makes
+    # `npm ci` skip devDependencies (typescript, @types/*, prisma). --include=dev
+    # forces them so the TypeScript build + prisma CLI are available.
     buildCommand: >
-      npm ci &&
+      npm ci --include=dev &&
       npm run build:shared &&
       npm --workspace @meetscribe/backend exec prisma generate &&
       npm run build:backend
@@ -26,11 +31,9 @@ services:
       npm --workspace @meetscribe/backend exec prisma migrate deploy &&
       node apps/backend/dist/index.js
     envVars:
-      # Injected automatically from the managed database below.
+      # Your existing PostgreSQL connection string — set this in the dashboard.
       - key: DATABASE_URL
-        fromDatabase:
-          name: meetscribe-db
-          property: connectionString
+        sync: false
       - key: NODE_ENV
         value: production
       # Generated once by Render and kept stable across deploys.
@@ -48,9 +51,3 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
-
-databases:
-  - name: meetscribe-db
-    databaseName: meetscribe
-    user: meetscribe
-    plan: free
