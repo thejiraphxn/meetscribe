@@ -72,6 +72,11 @@ authRouter.post(
 authRouter.get(
   '/google',
   asyncHandler(async (req, res) => {
+    if (!env.googleEnabled) {
+      throw AppError.badRequest(
+        'Google sign-in is not configured on this server (use email/password)',
+      );
+    }
     const codeChallenge =
       typeof req.query.code_challenge === 'string' ? req.query.code_challenge : undefined;
     res.redirect(buildGoogleAuthUrl(codeChallenge));

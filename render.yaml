@@ -38,19 +38,16 @@ services:
         generateValue: true
       - key: JWT_REFRESH_SECRET
         generateValue: true
-      # ── Set these in the Render dashboard after the first deploy ──────────
-      # Google OAuth client (Google Cloud Console → Credentials → OAuth Web).
+      # Desktop deep-link scheme the backend redirects to after OAuth.
+      - key: FRONTEND_URL
+        value: meetscribe://
+      # OPTIONAL — only for Google sign-in. Leave blank to use email/password
+      # only. (BACKEND_URL is auto-derived from Render's injected
+      # RENDER_EXTERNAL_URL, so it does not need to be set here.)
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
-      # Public URL of THIS service (e.g. https://meetscribe-api.onrender.com).
-      # Used to build the OAuth redirect URI; must match the Google console.
-      - key: BACKEND_URL
-        sync: false
-      # Desktop deep-link scheme the backend redirects to after OAuth.
-      - key: FRONTEND_URL
-        value: meetscribe://
 
 databases:
   - name: meetscribe-db
