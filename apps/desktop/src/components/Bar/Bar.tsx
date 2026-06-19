@@ -3,6 +3,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type { TranscriptionMode } from '../../types';
 import { useEngine } from '../../hooks/useEngine';
 import { useAuth } from '../../hooks/useAuth';
+import { backendUrl } from '../../api/client';
+
+type WakeState = 'idle' | 'waking' | 'awake' | 'error';
 
 function newSessionId(): string {
   return crypto.randomUUID();
@@ -77,6 +80,40 @@ export function Bar(): React.ReactElement {
   const hide = useCallback(() => void invoke('hide_bar'), []);
   const quit = useCallback(() => void invoke('quit'), []);
 
+  // On-demand wake for the (free-tier) backend — pings /health, retrying through
+  // the cold start (~30-50s) until it responds.
+  const [wake, setWake] = useState<WakeState>('idle');
+  const wakeServer = useCallback(async () => {
+    const base = backendUrl();
+    if (!base) {
+      setWake('error');
+      return;
+    }
+    setWake('waking');
+    for (let i = 0; i < 8; i += 1) {
+      try {
+        const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(15000) });
+        if (res.ok) {
+          setWake('awake');
+          return;
+        }
+      } catch {
+        // cold start / network blip — retry
+      }
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+    setWake('error');
+  }, []);
+
+  const wakeColor =
+    wake === 'awake'
+      ? 'text-emerald-400'
+      : wake === 'error'
+        ? 'text-accent-red'
+        : wake === 'waking'
+          ? 'text-accent-amber'
+          : 'text-text-muted';
+
   const modeBtn = (value: TranscriptionMode, label: string, hint: string): React.ReactElement => (
     <button
       type="button"
@@ -147,6 +184,25 @@ export function Bar(): React.ReactElement {
             Sign in
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => void wakeServer()}
+          disabled={wake === 'waking'}
+          title={
+            wake === 'awake'
+              ? 'Backend is awake'
+              : wake === 'error'
+                ? 'Backend unreachable — click to retry'
+                : 'Wake the backend server'
+          }
+          className={`h-8 w-8 shrink-0 flex items-center justify-center rounded-lg transition
+            hover:bg-white/[0.06] disabled:cursor-wait ${wakeColor}`}
+        >
+          <span className={wake === 'waking' ? 'inline-block animate-spin' : ''}>
+            {wake === 'waking' ? '⟳' : '⏻'}
+          </span>
+        </button>
+
         <IconButton onClick={toggleCaption} title="Toggle floating captions">
           <span className="text-[10px] font-bold tracking-tight">CC</span>
         </IconButton>
