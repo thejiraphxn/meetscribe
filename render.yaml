@@ -1,0 +1,43 @@
+# Render Infrastructure-as-Code for the MeetScribe backend + database.
+#
+# Build runs from the monorepo root so the `@meetscribe/shared` workspace
+# dependency is installed + built before the backend compiles.
+services:
+  - type: web
+    name: meetscribe-api
+    runtime: node
+    plan: free
+    buildCommand: >
+      npm ci &&
+      npm run build:shared &&
+      npm run build:backend &&
+      npm --workspace @meetscribe/backend exec prisma generate
+    startCommand: >
+      npm --workspace @meetscribe/backend exec prisma migrate deploy &&
+      node apps/backend/dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: meetscribe-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: BACKEND_URL
+        sync: false
+      - key: FRONTEND_URL
+        value: meetscribe://
+
+databases:
+  - name: meetscribe-db
+    databaseName: meetscribe
+    user: meetscribe
+    plan: free

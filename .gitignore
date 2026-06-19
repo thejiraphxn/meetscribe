@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnp/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/binaries/
+
+# Env
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Native build artifacts
+native/systemtap
+native/*.o
+
+# Local data
+*.db
+*.sqlite
+.meetscribe/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Prisma
+apps/backend/prisma/migrations/dev.db

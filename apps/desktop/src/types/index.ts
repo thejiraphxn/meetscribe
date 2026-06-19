@@ -1,0 +1,21 @@
+// Re-export the shared DTOs so UI code imports from a single local path.
+export type {
+  TranscriptionMode,
+  SyncStatus,
+  EngineState,
+  ProcessingStep,
+  TranscriptSegmentDTO,
+  ActionItemDTO,
+  SessionPayload,
+  UserDTO,
+  ProjectDTO,
+  SessionSummaryDTO,
+  SessionDetailDTO,
+  PersistedActionItemDTO,
+  AuthTokens,
+  ApiResponse,
+  ApiError,
+  Paginated,
+  WsMessage,
+  WsCommand,
+} from '@meetscribe/shared';

@@ -1,0 +1,20 @@
+{
+  "name": "meetscribe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MeetScribe — macOS meeting capture, transcription & summarisation",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build:shared": "npm run build -w @meetscribe/shared",
+    "build:backend": "npm run build -w @meetscribe/backend",
+    "dev:backend": "npm run dev -w @meetscribe/backend",
+    "dev:desktop": "npm run dev -w @meetscribe/desktop",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
